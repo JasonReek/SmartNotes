@@ -3,7 +3,7 @@ from PySide2.QtWebEngineWidgets import (QWebEngineView, QWebEngineSettings)
 from PySide2.QtCore import (Qt)
 from PySide2.QtGui import (QKeySequence, QIcon)
 
-from sn_widgets import HorizontalFiller
+from sn_widgets import (HorizontalFiller, VerticalFiller)
 
 import os 
 from time import sleep 
@@ -136,6 +136,7 @@ class Docks:
         web_layout.addWidget(self._search_bar)
         web_layout.addWidget(self._view)
         web_layout.addWidget(self._search_bar.findBar())
+        web_layout.addWidget(VerticalFiller(self))
         
 
         self._web_dock = QDockWidget("Web Browser", self)

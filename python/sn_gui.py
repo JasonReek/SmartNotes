@@ -1,15 +1,17 @@
-from PySide2.QtWidgets import (QMainWindow, QToolBar, QPushButton, QTabWidget, QDockWidget, QVBoxLayout, QAction, QLineEdit, QComboBox, QGridLayout, QWidget, QLabel, QHBoxLayout)
+from PySide2.QtWidgets import (QMainWindow, QMessageBox, QToolBar, QPushButton, QTabWidget, QDockWidget, QVBoxLayout, QAction, QLineEdit, QComboBox, QGridLayout, QWidget, QLabel, QHBoxLayout)
 from sn_widgets import (NoteTextBox, Terminal, DefinitionBox, WordListBox, PageTabs, HorizontalFiller)
 from sn_dict_database import DefinitionsDatabase
 from sn_windowmenu import WindowMenu
 from PySide2.QtCore import (Qt)
 from PySide2.QtGui import (QIcon)
-from sn_format_toolbars import (FontToolBar, AlignToolBar)
+from sn_toolbars import (FontToolBar, AlignToolBar, LogicSymbolToolbar)
 from sn_htmleditor import (HtmlWriter)
 from sn_docks import Docks
+from sn_recovery import NotepadRecovery
 import os 
+from datetime import datetime
 
-class MainWindow(QMainWindow, WindowMenu, Docks):
+class MainWindow(QMainWindow, WindowMenu, Docks, NotepadRecovery):
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -51,6 +53,8 @@ class MainWindow(QMainWindow, WindowMenu, Docks):
         text_editor = NoteTextBox(parent=self)
         text_editor.setTabName(tab_name)
         text_editor.textChanged.connect(text_editor.unsaved)
+        text_editor.textChanged.connect(self._page_tabs.checkTabIconState)
+        self._page_tabs.currentChanged.connect(text_editor.tabChange)
 
         self._notepads = {tab_name: text_editor}
 
@@ -82,7 +86,7 @@ class MainWindow(QMainWindow, WindowMenu, Docks):
         self._font_toolbar = FontToolBar(parent=self)
         self._font_toolbar.connectNotepad(text_editor) 
         self._align_toolbar = AlignToolBar(parent=self)
-
+        self._logic_toolbar = LogicSymbolToolbar(parent=self)
 
         # Utility Toolbar
         #---------------------------------------------------------------------------------------------------------
@@ -90,6 +94,7 @@ class MainWindow(QMainWindow, WindowMenu, Docks):
         self.addToolBar(self._utility_toolbar)
         self.addToolBar(self._font_toolbar)
         self.addToolBar(self._align_toolbar)
+        self.addToolBar(self._logic_toolbar)
         text_editor.textChanged.connect(self._utility_toolbar.updateSearch)
 
         # Display the widgets
@@ -100,14 +105,45 @@ class MainWindow(QMainWindow, WindowMenu, Docks):
         # Init. Window Menu
         WindowMenu.__init__(self)
 
+        NotepadRecovery.__init__(self)
+
         text_editor.setSaved(True)
+    
+    def closeEvent(self, event):
+        try:
+            
+            # Create a Logs directory if one does not exist. 
+            if not os.path.isdir("Logs"):
+                os.mkdir("Logs")
+            date = date = datetime.now()
+            f_date = date.strftime("%d-%b-%Y(%Hhr-%Mmin-%Ssec)")
+            saved, saves = self.savesNeeded(f_date)
+            
+            # Log Event 
+            log_text = self.TERMINAL.toPlainText()
+            log_save = "Logs/Log_{dt}.txt".format(dt=f_date)
+            with open(log_save, 'w') as log_file:
+                log_file.write(log_text)
+
+            if not saved:
+                save_msg = self.newPageSaveWarning(saves) 
+                if save_msg == QMessageBox.Yes:
+                    event.ignore()
+                else:
+                    event.accept()
+
+            
+        except Exception as e:
+            self.dialogCritical(str(e))
 
     # For trouble shooting 
-    def savesNeeded(self):
-        saved, saves = self.areDocumentSaved()
+    def savesNeeded(self, date):
+        saved, saves = self.areDocumentsSaved()
+        self.terminal("Save event at {dt}".format(dt=date))
         self.terminal("Is it saved: {sd} | Save files: {sv}".format(sd=saved, sv=saves))
+        return saved, saves 
         
-    def areDocumentSaved(self):
+    def areDocumentsSaved(self):
         """
         Checks if documents are saved. If not, it will return false, and
         return a list of the document names that were not saved. Else, it
@@ -181,7 +217,7 @@ class MainWindow(QMainWindow, WindowMenu, Docks):
 """
 class UtilityToolBar(QToolBar):
     """Contains the "find text" feature, and will be the home of future utilities."""
-    def __init__(self, title="Utility Bar", parent=None):
+    def __init__(self, title="Find Text Toolbar", parent=None):
         super().__init__(title, parent)
         self._parent = parent
         self._not_refresh = True  

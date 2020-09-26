@@ -51,7 +51,7 @@ def main():
     app = QApplication(sys.argv)
     app.setStyle("fusion")
     app.setWindowIcon(QIcon(os.path.join('images', 'SmartNote.png')))
-
+    
     with open(qss_loc, 'r') as main_qss:
         main_style = main_qss.read()
     app.setStyleSheet(main_style)

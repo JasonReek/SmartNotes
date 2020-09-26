@@ -31,9 +31,10 @@ import enchant
 from enchant import tokenize
 from enchant.errors import TokenizerNotFoundError
 
-from PySide2.QtWidgets import (QApplication, QMainWindow, QLineEdit, QMenu, QDialog, QAction, QFormLayout, QMessageBox, QTextEdit, QDockWidget, QMenu, QComboBox, QFrame, QListWidget, 
-                               QTabWidget, QToolTip, QAbstractItemView, QVBoxLayout, QGridLayout, QWidget, QLabel, QPushButton, QHBoxLayout, QTableWidgetItem, QFileDialog, QActionGroup, QSizePolicy, QAction)
-from PySide2.QtGui import (QSyntaxHighlighter, QIcon, QFocusEvent, QTextBlockUserData, QTextCursor, QTextCharFormat, QBrush, QFont, QColor, QDesktopServices)
+from PySide2.QtWidgets import (QApplication, QStyle, QStylePainter, QStyleOptionTab, QMainWindow, QLineEdit, QMenu, QDialog, QAction, QFormLayout,
+                               QMessageBox, QTextEdit, QDockWidget, QMenu, QComboBox, QFrame, QListWidget, QTabWidget, QToolTip, QTabBar, QAbstractItemView, 
+                               QVBoxLayout, QGridLayout, QWidget, QLabel, QPushButton, QHBoxLayout, QTableWidgetItem, QFileDialog, QActionGroup, QSizePolicy, QAction)
+from PySide2.QtGui import (QSyntaxHighlighter, QIcon, QFocusEvent, QTextBlockUserData, QTextCursor, QPalette, QTextCharFormat, QBrush, QFont, QColor, QDesktopServices)
 from PySide2.QtCore import (Qt, QEvent, QRegExp, QTimer)
 from sn_dict_database import DefinitionsDatabase
 import os 
@@ -208,8 +209,20 @@ class PageTabs(QTabWidget):
         self.setMovable(True)
         self.tabBar().tabMoved.connect(self.updateTabPostions)
 
-        self.wait_for_new_to_complete = False 
+        self.wait_for_new_to_complete = False
+
+    def showUnsavedIcon(self, index):
+        self.setTabIcon(index, QIcon(os.path.join('images', 'warning.png')))
+        self.setTabToolTip(index, '"Document needs to be saved.')
     
+    def showSavedIcon(self, index):
+        self.setTabIcon(index, QIcon(os.path.join('images', 'edit-new-paper.png')))
+    
+    def checkTabIconState(self):
+        for tab_index in range(0, self.tabBar().count()):
+            if not self._parent._notepads[self.tabText(tab_index)].isSaved():
+                self.showUnsavedIcon(tab_index)
+              
     def updateTabPostions(self):
         """Keeps track of notepad pages and tab positions."""
         for tab_pos, tab_name in enumerate(self.tabNames()):
@@ -222,15 +235,18 @@ class PageTabs(QTabWidget):
     def _removeSelectedTab(self, index):
         """ Removes a notepad page tab. """ 
         def removeSelectedTab():
-            all_files_saved, file_list = self._parent.areDocumentSaved()
+            save_msg = None 
+            all_files_saved, file_list = self._parent.areDocumentsSaved()
             tab_name = self.tabText(index)
             if not all_files_saved and tab_name in file_list:
                 save_msg = self._parent.saveWarning(tab_name)
                 if save_msg == QMessageBox.Yes:
                     self._parent.fileSave()
+                
+            if save_msg is None or (save_msg is not None and save_msg != QMessageBox.Cancel):
+                self.removeTab(index)
+                self._parent.updateTabPages(removed_tab=True, removed_tab_name=tab_name)
 
-            self.removeTab(index)
-            self._parent.updateTabPages(removed_tab=True, removed_tab_name=tab_name)
         return removeSelectedTab
 
     # (LEGACY)
@@ -268,14 +284,18 @@ class PageTabs(QTabWidget):
             page_layout.addWidget(new_notepad)
             page_layout.addWidget(HorizontalFiller())
             new_tab_index = self.addTab(page, QIcon(os.path.join('images', 'edit-new-paper.png')), tab_name)
+
             new_notepad.textChanged.connect(new_notepad.unsaved)
             new_notepad.textChanged.connect(self._parent._bottom_bar.wordCount)
             new_notepad.textChanged.connect(self._parent._utility_toolbar.updateSearch)
-
+            new_notepad.textChanged.connect(self.checkTabIconState)
+            self.currentChanged.connect(new_notepad.tabChange)
+             
             self._parent.updateTabPages()
             self._parent._font_toolbar.connectNotepad(new_notepad)
             self.setCurrentIndex(new_tab_index)
             new_notepad.setSaved(True)
+            new_notepad.tab_changed = False
         
     def contextMenuEvent(self, event):
         """Context menu of tab options. """
@@ -319,12 +339,16 @@ class PageTabs(QTabWidget):
         new_page_layout.addWidget(self._parent._notepads[new_page_name])
         self._parent._font_toolbar.connectNotepad(self._parent._notepads[new_page_name])
         self._parent._notepads[new_page_name].textChanged.connect(self._parent._bottom_bar.wordCount)
+        self._parent._notepads[new_page_name].textChanged.connect(self._parent._notepads[new_page_name].unsaved)
+        self._parent._notepads[new_page_name].textChanged.connect(self._parent._utility_toolbar.updateSearch)
+        self._parent._notepads[new_page_name].textChanged.connect(self.checkTabIconState)
+        self.currentChanged.connect(self._parent._notepads[new_page_name].tabChange)
         self.addTab(new_page, QIcon(os.path.join('images', 'edit-new-paper.png')), new_page_name)
+        self._parent._notepads[new_page_name].tab_changed = False
         self.wait_for_new_to_complete = False 
 
 # The main document editor, this is where the user does most of their work. 
 #---------------------------------------------------------------------------------------------------------
-
 class NoteTextBox(QTextEdit):
     """ The main document editor, this is where the user does most of their work."""
     # Clamping value for words like "regex" which suggest so many things that
@@ -335,6 +359,8 @@ class NoteTextBox(QTextEdit):
         QTextEdit.__init__(self, *args)
         self._tab_name = tab_name
         self._parent = parent 
+
+        self.tab_changed = False 
 
         # Set tab width
         f_metrics = self.fontMetrics()
@@ -382,7 +408,10 @@ class NoteTextBox(QTextEdit):
         
     def unsaved(self):
         """Signal method for keeping track of unsaved documents"""
-        self._SAVED_ = False 
+        if self.tab_changed:
+            self.tab_changed = False 
+        else:
+            self._SAVED_ = False 
     
     def isSaved(self):
         """Returns true if this document is currently saved."""
@@ -391,6 +420,8 @@ class NoteTextBox(QTextEdit):
     def setSaved(self, saved):
         """Set the current document's save state."""
         self._SAVED_ = saved
+        if self._SAVED_:
+            self._parent._page_tabs.showSavedIcon(self._parent._pages[self._tab_name])
 
     def turnHighlightingOff(self):
         """Turn off highlighting. """
@@ -399,6 +430,9 @@ class NoteTextBox(QTextEdit):
     def turnHighlightingOn(self):
         """Turn on highlighting."""
         self.highlighter.turnOn()
+
+    def tabChange(self, index):
+        self.tab_changed = True 
 
     def setFormat(self):
         """Reset the formatting to the default margin spacing. """

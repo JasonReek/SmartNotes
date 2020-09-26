@@ -5,6 +5,7 @@ from PySide2.QtPrintSupport import (QPrinter, QPrintDialog, QPrintPreviewDialog)
 from sn_widgets import (NewDictionaryDialog, NewDefinitionDialog)
 import os 
 from time import sleep 
+import chardet
 
 def splitext(p):
     return os.path.splitext(p)[1].lower()
@@ -66,14 +67,18 @@ class WindowMenu:
         self._toolbar_sub_view_menu = self._view_menu.addMenu("Toolbars")
         self._toolbar_sub_view_menu.addAction(self._font_toolbar.toggleViewAction())
         self._toolbar_sub_view_menu.addAction(self._align_toolbar.toggleViewAction())
+        self._toolbar_sub_view_menu.addAction(self._logic_toolbar.toggleViewAction())
+        self._toolbar_sub_view_menu.addSeparator()
         self._toolbar_sub_view_menu.addAction(self._utility_toolbar.toggleViewAction())
+        
         self._view_menu.addSeparator()
-        self._view_menu.addAction(self._def_dock.toggleViewAction())
-        self._view_menu.addAction(self._word_dock.toggleViewAction())
-        self._view_menu.addAction(self._html_dock.toggleViewAction())
-        self._view_menu.addAction(self._web_dock.toggleViewAction())
-        self._view_menu.addSeparator()
-        self._view_menu.addAction(self._terminal_dock.toggleViewAction())
+        self._docks_sub_view_menu = self._view_menu.addMenu("Docks")
+        self._docks_sub_view_menu.addAction(self._def_dock.toggleViewAction())
+        self._docks_sub_view_menu.addAction(self._word_dock.toggleViewAction())
+        self._docks_sub_view_menu.addAction(self._html_dock.toggleViewAction())
+        self._docks_sub_view_menu.addAction(self._web_dock.toggleViewAction())
+        self._docks_sub_view_menu.addSeparator()
+        self._docks_sub_view_menu.addAction(self._terminal_dock.toggleViewAction())
 
         # HELP -----------------------------------------
         """
@@ -116,7 +121,7 @@ class WindowMenu:
 
     def newPage(self):
         """Clears all the current documents and starts with a fresh new one."""
-        all_files_saved, file_list = self.areDocumentSaved()
+        all_files_saved, file_list = self.areDocumentsSaved()
         if not all_files_saved:
             msg = self.newPageSaveWarning(file_list)
             if msg == QMessageBox.No:
@@ -146,8 +151,23 @@ class WindowMenu:
         msg.setWindowTitle("Unsaved File")
         msg.setIcon(msg.Warning)
         msg.setText('"{fn}" has been modified, would you like to save?'.format(fn=file_name))
-        msg.setStandardButtons(msg.Yes | msg.No) 
+        msg.setStandardButtons(msg.Yes | msg.No | msg.Cancel) 
         return msg.exec_()
+
+    def fileEncodingChardet(self, file_path):
+        try:
+            with open(file_path, 'rb') as f:
+                result = chardet.detect(f.read()) 
+                return result['encoding'] 
+        except Exception as error:
+            self.terminal("File encoding error: {e}".format(e=error)) 
+
+    def fileEncoding(self, file_path):
+        try:
+            with open(file_path) as src_file:
+                return src_file.encoding 
+        except Exception as error:
+            self.terminal("File encoding error: {e}".format(e=error))
 
     def fileOpen(self):
         """ The file opening handler.""" 
@@ -157,7 +177,7 @@ class WindowMenu:
             not_a_reload = True 
             basename = os.path.basename(path)
             current_tab_name = self.activeNotepad().tabName()
-            all_files_saved, file_list = self.areDocumentSaved()
+            all_files_saved, file_list = self.areDocumentsSaved()
             if not all_files_saved and current_tab_name in file_list:
                 save_msg = self.saveWarning(current_tab_name)
                 if save_msg == QMessageBox.Yes:
@@ -172,11 +192,12 @@ class WindowMenu:
                     not_a_reload = False 
 
             try:
-                with open(path, 'rU') as f:
+                enc = self.fileEncodingChardet(path)
+                with open(path, 'rU', encoding=enc) as f:
                     text = f.read()
 
             except Exception as e:
-                self.dialogCritical(str(e))
+                self.terminal(str(e))
 
             else:
                 self.activeNotepad().setSavePath(path)
@@ -200,7 +221,9 @@ class WindowMenu:
 
         text = self.activeNotepad().toHtml() if self.activeNotepad().savePath().lower().endswith((".smtn", ".htm", ".html")) else self.activeNotepad().toPlainText()
         try:
-            with open(self.activeNotepad().savePath(), 'w') as f:
+            path = self.activeNotepad().savePath()
+            enc = self.fileEncodingChardet(path)
+            with open(path, 'w', encoding=enc) as f:
                 f.write(text)
                 f.flush()
                 os.fsync(f)
@@ -208,16 +231,19 @@ class WindowMenu:
                 self.activeNotepad().setSaved(True)
 
         except Exception as e:
-            self.dialog_critical(str(e))
+            self.terminal(str(e))
 
     def fileSaveAs(self):
         """File save as handler."""
-        good_name = True  
         path, _ = QFileDialog.getSaveFileName(self, "Save file", "", "Smart Note documents (*.smtn);; PDF files (*.pdf);; Text documents (*.txt); All files (*.*)")
         new_tab_name = os.path.basename(path)
         if not path:
             # If dialog is cancelled, will return ''
             return
+        while self.tabOpenOtherThanFirst(new_tab_name):
+            self.dialogCritical("That file name is already open, try another name.")
+            path, _ = QFileDialog.getSaveFileName(self, "Save file", "", "Smart Note documents (*.smtn);; PDF files (*.pdf);; Text documents (*.txt); All files (*.*)")
+            new_tab_name = os.path.basename(path)
 
         # PDF Saved
         if path.lower().endswith('.pdf'):
@@ -231,33 +257,34 @@ class WindowMenu:
             self.activeNotepad().setSavePath(path)
             text = self.activeNotepad().toHtml() if self.activeNotepad().savePath().lower().endswith((".smtn", ".htm", ".html")) else self.activeNotepad().toPlainText()
             try:
-                with open(self.activeNotepad().savePath(), 'w') as f:
+                enc = self.fileEncodingChardet(self.activeNotepad().savePath())
+                with open(self.activeNotepad().savePath(), 'w', encoding=enc) as f:
                     f.write(text)
                     f.flush()
                     os.fsync(f)
 
-                    self.activeNotepad().setSaved(True)
-
-                    self.activeNotepad().setTabName(new_tab_name)
-                    self._page_tabs.setTabText(self._page_tabs.currentIndex(), new_tab_name)
-                    self.updateTabPages(update_notebook=True)
-
             except Exception as e:
-                self.dialog_critical(str(e))
+                self.terminal(str(e))
 
             else:
-                new_tab_name = os.path.basename(self.activeNotepad().savePath())
-                for tab_name in self._page_tabs.tabNames():
-                    if tab_name == new_tab_name:
-                        good_name = False  
-                    break 
-            
-                if good_name:
-                    self.activeNotepad().setTabName(new_tab_name)
-                    self._page_tabs.setTabText(self._page_tabs.currentIndex(), new_tab_name)
-                    self.updateTabPages(update_notebook=True)
-                else:
-                    self.dialogCritical("File name is already open!")
+                self.activeNotepad().setSaved(True)
+                self.activeNotepad().setTabName(new_tab_name)
+                self._page_tabs.setTabText(self._page_tabs.currentIndex(), new_tab_name)
+                self.updateTabPages(update_notebook=True)
+
+    def tabOpen(self, tab_name):
+        """Checks if the selected tab name already exists within the tabs."""
+        for other_tab_name in self._page_tabs.tabNames():
+            if tab_name == other_tab_name:
+                return True
+        return False 
+    
+    def tabOpenOtherThanFirst(self, tab_name):
+        """Checks if the selected tab name already exists within the tabs other than the first tab."""
+        for tab_index, other_tab_name in enumerate(self._page_tabs.tabNames()):
+            if tab_name == other_tab_name and tab_index:
+                return True
+        return False 
 
     def setDictionaryToolTips(self, checked):
         """When checked, the document definition tooltips will show when the user
